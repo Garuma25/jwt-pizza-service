@@ -3,7 +3,8 @@
     "coverageReporters": ["json-summary", "text"],
     "coverageThreshold": {
       "global": {
-        "lines": 80
+        "statements": 80
       }
-    }
+    },
+    "setupFilesAfterEnv": ["./jest.setup.js"]
   }
