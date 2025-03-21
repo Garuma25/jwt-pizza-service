@@ -1,93 +1,61 @@
-const config = require('./config').metrics;
+const config = require('./config');
 const os = require('os');
 
-const unprocessedData = { // The data structure to hold the logs
-    http_latencies: [],
-    http_req_num: {
-        get: 0,
-        put: 0,
-        post: 0,
-        delete: 0
-    },
+console.log("🚨 Metrics Config Loaded:");
+console.log("URL:", config.metrics?.url);
+console.log("API Key Exists:", !!config.metrics?.apiKey);
+
+const unprocessedData = { 
+    http_req_num: { get: 0, put: 0, post: 0, delete: 0 },
     revenue: 0,
     pizza_purchases: 0,
     pizza_purchase_failures: 0,
-    pizza_latencies: [],
+    request_latency: [],
+    pizza_creation_latency: [],
     auth_success: 0,
     auth_failure: 0,
     active_users: new Map()
-}
+};
 
-const requestTracker = (req, res, next) => { // The middle ware for the requests to go and log them
+const requestTracker = (req, res, next) => { 
     const start = Date.now();
-    const handler = () => {
-        const end = Date.now();
-        const duration = end - start;
+    res.on('finish', () => {
+        const duration = Date.now() - start;
 
         if (['GET', 'POST', 'PUT', 'DELETE'].includes(req.method)) {
-            unprocessedData.http_latencies.push(duration);
+            // Track request count
+            unprocessedData.http_req_num[req.method.toLowerCase()] += 1;
+            unprocessedData.request_latency.push(duration);
+        }
 
-            switch (req.method) {
-                case 'GET':
-                    unprocessedData.http_req_num.get += 1;
-                    break;
-                case 'POST':
-                    unprocessedData.http_req_num.post += 1;
-                    break;
-                case 'PUT':
-                    unprocessedData.http_req_num.put += 1;
-                    break;
-                case 'DELETE':
-                    unprocessedData.http_req_num.delete += 1;
-                    break;
-                default:
-                    return;
-            }
-
-            if(req.originalUrl == '/api/auth' && req.method == 'DELETE') {
-                // Remove from active if logged out
-                if(req.statusCode != 200 && req.user != null) {
-                    unprocessedData.active_users.delete(req.user.email);
-                    return;
-                }
-            }
-
-            // Handle purchase metrics
-            if (req.originalUrl == '/api/order' && req.method == 'POST') {
-                unprocessedData.pizza_latencies.push(duration);
-                if (res.statusCode != 200) {
-                    unprocessedData.pizza_purchase_failures += 1;
-                    return;
-                }
+        // Handle purchases
+        if (req.originalUrl === '/api/order' && req.method === 'POST') {
+            unprocessedData.pizza_creation_latency.push(duration);
+            if (res.statusCode !== 200) {
+                unprocessedData.pizza_purchase_failures += 1;
+            } else {
                 unprocessedData.pizza_purchases += 1;
-                for (const item of req.body.items) {
-                    unprocessedData.revenue += item.price;
-                }
-            }
-
-            // Handle authentication metrics
-            else if(req.originalUrl == '/api/auth' && ['POST', 'PUT'].includes(req.method)) {
-                if(res.statusCode != 200) {
-                    unprocessedData.auth_failure += 1;
-                    return;
-                }
-                unprocessedData.auth_success += 1;
-                // Add to active users
-                unprocessedData.active_users.set(req.body.email, Date.now() * 1000000);
+                req.body.items.forEach(item => unprocessedData.revenue += item.price);
             }
         }
-    };
 
-    res.on('finish', handler);
-    res.on('close', handler);
+        // Handle authentication
+        if (req.originalUrl === '/api/auth' && ['POST', 'PUT'].includes(req.method)) {
+            if (res.statusCode !== 200) {
+                unprocessedData.auth_failure += 1;
+            } else {
+                unprocessedData.auth_success += 1;
+                unprocessedData.active_users.set(req.body.email, Date.now());
+            }
+        }
+    });
+
     next();
 };
 
-
-
 class MetricBuilder {
     constructor() {
-        this.metrics = []
+        this.metrics = [];
     }
 
     append(metricName, metricValue, type, unit) {
@@ -95,137 +63,115 @@ class MetricBuilder {
     }
 
     appendFromList(metricName, metricList, type, unit) {
-        const dataPoints = [];
-        for (const value of metricList) {
-            dataPoints.push({
-                asDouble: value,
-                timeUnixNano: Date.now() * 1000000,
-                attributes: [
-                    {
-                        key: "source",
-                        value: { "stringValue": config.source }
-                    }
-                ]
+        const dataPoints = metricList.map(value => ({
+            asDouble: value,
+            timeUnixNano: Date.now() * 1000000,
+            attributes: [{ key: "source", value: { "stringValue": config.source } }]
+        }));
+        
+        if (dataPoints.length > 0) {
+            this.metrics.push({
+                name: metricName,
+                unit: unit,
+                [type]: {
+                    dataPoints: dataPoints,
+                    ...(type === 'sum' && {
+                        aggregationTemporality: "AGGREGATION_TEMPORALITY_CUMULATIVE",
+                        isMonotonic: true
+                    })
+                }
             });
         }
-        if (dataPoints.length == 0) {
-            return;
-        }
-        this.metrics.push({
-            name: metricName,
-            unit: unit,
-            [type]: {
-                dataPoints: dataPoints,
-                ...(type == 'sum' && {
-                    aggregationTemporality: "AGGREGATION_TEMPORALITY_CUMULATIVE",
-                    isMonotonic: true
-                })
-            },
-        })
     }
 
     toString() {
-        const metric = {
-            resourceMetrics: [
-                {
-                    scopeMetrics: [
-                        {
-                            metrics: this.metrics
-                        },
-                    ],
-                },
-            ],
-        };
-
-        return JSON.stringify(metric);
+        return JSON.stringify({ resourceMetrics: [{ scopeMetrics: [{ metrics: this.metrics }] }] });
     }
 }
 
 function getCpuUsagePercentage() {
-    const cpuUsage = os.loadavg()[0] / os.cpus().length;
-    return cpuUsage.toFixed(2) * 100;
+    return ((os.loadavg()[0] / os.cpus().length) * 100).toFixed(2);
 }
 
 function getMemoryUsagePercentage() {
-    const totalMemory = os.totalmem();
-    const freeMemory = os.freemem();
-    const usedMemory = totalMemory - freeMemory;
-    const memoryUsage = (usedMemory / totalMemory) * 100;
-    return memoryUsage.toFixed(2);
+    return (((os.totalmem() - os.freemem()) / os.totalmem()) * 100).toFixed(2);
 }
 
-async function sendMetricToGrafana(body) { // the function that send over the information in bulk
-    await fetch(config.url, {
-        method: 'POST',
-        body: body,
-        headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
-    })
-        .then((response) => {
-            if (!response.ok) {
-                response.text().then((text) => {
-                    console.error(`Failed to push metrics data to Grafana: ${text}`);
-                    console.error(body);
-                });
-            } else {
-                console.log(`Pushed metrics`);
-            }
-        })
-        .catch((error) => {
-            console.error('Error pushing metrics:', error);
+async function sendMetricToGrafana(body) {
+    console.log("Sending to URL:", config.metrics.url);
+    console.log("Authorization Header:", `Bearer ${config.metrics.apiKey}`);
+    try {
+        const response = await fetch(config.metrics.url, { // ✅ FIXED
+            method: 'POST',
+            body: body,
+            headers: {
+                Authorization: `Bearer ${config.metrics.apiKey}`, // ✅ FIXED
+                'Content-Type': 'application/json'
+            },
         });
+    
+        if (!response.ok) {
+            console.error(`❌ Failed to push metrics: ${response.status}`);
+            console.error(await response.text()); // Logs error response from Grafana
+        } else {
+            console.log(`✅ Pushed metrics successfully`);
+        }
+    } catch (error) {
+        console.error('❌ Error pushing metrics:', error);
+    }
 }
+
 function zeroOut() {
-    // Zeroing out the unprocessed data structure
-    unprocessedData.http_latencies = [];
+    unprocessedData.request_latency = [];
+    unprocessedData.pizza_creation_latency = [];
     unprocessedData.pizza_purchases = 0;
-    unprocessedData.http_latencies = []
-    unprocessedData.http_req_num.get = unprocessedData.http_req_num.put = unprocessedData.http_req_num.post = unprocessedData.http_req_num.delete = unprocessedData.pizza_purchase_failures = unprocessedData.revenue = unprocessedData.auth_success = unprocessedData.auth_failure = 0;
-    // Should not clear unprocessedData.active_users
+    unprocessedData.pizza_purchase_failures = 0;
+    unprocessedData.revenue = 0;
+    unprocessedData.auth_success = 0;
+    unprocessedData.auth_failure = 0;
+    Object.keys(unprocessedData.http_req_num).forEach(key => unprocessedData.http_req_num[key] = 0);
 }
-function sendMetricsPeriodically(period) { // Sets the timer in which the metrics are sent
+
+function sendMetricsPeriodically(period) { 
     return setInterval(async () => {
-        console.log('Sending metrics...')
         try {
-            const buf = new MetricBuilder();
-            httpMetrics(buf);
-            systemMetrics(buf);
-            userMetrics(buf);
-            purchaseMetrics(buf);
-            authMetrics(buf);
+            const builder = new MetricBuilder();
+            httpMetrics(builder);
+            systemMetrics(builder);
+            userMetrics(builder);
+            purchaseMetrics(builder);
+            authMetrics(builder);
             zeroOut();
 
-            const metrics = buf.toString();
-            await sendMetricToGrafana(metrics);
+            await sendMetricToGrafana(builder.toString());
         } catch (error) {
-            console.log('Error sending metrics', error);
+            console.log('Error sending metrics:', error);
         }
     }, period);
 }
 
 function httpMetrics(builder) {
-    builder.appendFromList('latency', unprocessedData.http_latencies, 'sum', 'ms');
     builder.append('get_requests', unprocessedData.http_req_num.get, 'sum', '1');
     builder.append('put_requests', unprocessedData.http_req_num.put, 'sum', '1');
     builder.append('post_requests', unprocessedData.http_req_num.post, 'sum', '1');
     builder.append('delete_requests', unprocessedData.http_req_num.delete, 'sum', '1');
+    builder.appendFromList('request_latency', unprocessedData.request_latency, 'sum', 'ms');
 }
 
-function systemMetrics(builder) { // Sending the cpu and memory values
-    const cpuUsage = getCpuUsagePercentage();
-    const memoryUsage = getMemoryUsagePercentage();
-    builder.append('cpu_usage', cpuUsage, 'gauge', '%');
-    builder.append('memory_usage', memoryUsage, 'gauge', '%');
+function systemMetrics(builder) {
+    builder.append('cpu_usage', getCpuUsagePercentage(), 'gauge', '%');
+    builder.append('memory_usage', getMemoryUsagePercentage(), 'gauge', '%');
 }
 
 function userMetrics(builder) {
     builder.append('active_users', unprocessedData.active_users.size, 'sum', '1');
 }
 
-function purchaseMetrics(builder) { // Pizza latency, pizza errors and pizza purchases
-    builder.appendFromList('pizza_latency', unprocessedData.pizza_latencies, 'sum', 'ms');
+function purchaseMetrics(builder) {
     builder.append('pizza_purchases', unprocessedData.pizza_purchases, 'sum', '1');
     builder.append('pizza_errors', unprocessedData.pizza_purchase_failures, 'sum', '1');
     builder.append('revenue', unprocessedData.revenue, 'sum', '1');
+    builder.appendFromList('pizza_creation_latency', unprocessedData.pizza_creation_latency, 'sum', 'ms');
 }
 
 function authMetrics(builder) {
@@ -233,4 +179,4 @@ function authMetrics(builder) {
     builder.append('auth_failure', unprocessedData.auth_failure, 'sum', '1');
 }
 
-module.exports = { sendMetricsPeriodically, requestTracker }
+module.exports = { sendMetricsPeriodically, requestTracker };
