@@ -1,6 +1,10 @@
 const config = require('./config');
 const os = require('os');
 
+console.log("🚨 Metrics Config Loaded:");
+console.log("URL:", config.metrics?.url);
+console.log("API Key Exists:", !!config.metrics?.apiKey);
+
 const unprocessedData = { 
     http_req_num: { get: 0, put: 0, post: 0, delete: 0 },
     revenue: 0,

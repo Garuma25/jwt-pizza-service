@@ -63,6 +63,11 @@ jobs:
               apiKey: '${{ secrets.METRICS_API_KEY }}',
             }, 
           };" > src/config.js
+          
+      - name: Debug config.js content
+        run: |
+          echo "🔍 Config.js contents:"
+          cat src/config.js    
 
       - name: Tests
         run: npm test 
