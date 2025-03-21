@@ -58,21 +58,26 @@ function metrics(metricName, metricValue, attributes) {
     });
   });
 
+  const encodedKey = Buffer.from(config.metrics.apiKey).toString('base64');
+
   fetch(`${config.metrics.url}`, {
     method: 'POST',
     body: JSON.stringify(metric),
-    headers: {Authorization: `Bearer ${config.metrics.apiKey}`, 'Content-Type': 'application/json'},
+    headers: {
+        Authorization: `Basic ${encodedKey}`,
+        'Content-Type': 'application/json',
+    },
   })
-      .then((response) => {
-        if (!response.ok) {
-          console.error('Failed to push metrics data to Grafana');
-        } else {
-          console.log(`✅ Pushed ${metricName}`);
-        }
-      })
-      .catch((error) => {
-        console.error('❌ Error pushing metrics:', error);
-      });
+  .then((response) => {
+    if (!response.ok) {
+        console.error('Failed to push metrics data to Grafana');
+    } else {
+        console.log(`✅ Pushed ${metricName}`);
+    }
+  })
+  .catch((error) => {
+    console.error('❌ Error pushing metrics:', error);
+  });
 }
 
 function getCpuUsagePercentage() {
