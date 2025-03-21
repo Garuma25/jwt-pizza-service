@@ -1,4 +1,4 @@
-const config = require('./config').metrics;
+const config = require('./config');
 const os = require('os');
 
 const unprocessedData = { 
