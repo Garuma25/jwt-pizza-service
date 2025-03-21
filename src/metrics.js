@@ -98,6 +98,8 @@ function getMemoryUsagePercentage() {
 }
 
 async function sendMetricToGrafana(body) {
+    console.log("Sending to URL:", config.metrics.url);
+    console.log("Authorization Header:", `Bearer ${config.metrics.apiKey}`);
     try {
         const response = await fetch(config.metrics.url, { // ✅ FIXED
             method: 'POST',
