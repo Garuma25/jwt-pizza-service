@@ -95,18 +95,23 @@ function getMemoryUsagePercentage() {
 
 async function sendMetricToGrafana(body) {
     try {
-        const response = await fetch(config.url, {
+        const response = await fetch(config.metrics.url, { // ✅ FIXED
             method: 'POST',
             body: body,
-            headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
+            headers: {
+                Authorization: `Bearer ${config.metrics.apiKey}`, // ✅ FIXED
+                'Content-Type': 'application/json'
+            },
         });
-
+    
         if (!response.ok) {
-            console.error(`Failed to push metrics data to Grafana: ${await response.text()}`);
-            console.error(body);
+            console.error(`❌ Failed to push metrics: ${response.status}`);
+            console.error(await response.text()); // Logs error response from Grafana
+        } else {
+            console.log(`✅ Pushed metrics successfully`);
         }
     } catch (error) {
-        console.error('Error pushing metrics:', error);
+        console.error('❌ Error pushing metrics:', error);
     }
 }
 
