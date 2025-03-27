@@ -148,7 +148,7 @@ function latencyMetrics(metricArray) {
     }
 }
 
-// This will periodically send metrics to Grafana
+
 setInterval(() => {
     const metricArray = [];
     httpMetrics(metricArray);
